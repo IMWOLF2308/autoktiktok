@@ -1,0 +1,61 @@
+# Python environments and caches
+.venv/
+.venv-backup-*/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Personal settings, keys and credentials
+.appdata/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials*.json
+secrets*.json
+.codex/
+.agents/
+.aws/
+
+# Generated builds and downloaded tools
+/bin/
+/build/
+/dist/
+*.exe
+*.dll
+*.zip
+*.spec
+
+# User media and generated jobs, wherever they are created
+/input_videos/
+/output_videos/
+/temp/
+.autoedit_work/
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.webm
+*.mp3
+*.wav
+*.m4a
+*.aac
+*.part
+*.log
+*.pid
+tiktok_*.txt
+tiktok_*.jpg
+
+# Local editor and OS state
+.idea/
+.vscode/*.log
+Thumbs.db
+Desktop.ini
+.DS_Store

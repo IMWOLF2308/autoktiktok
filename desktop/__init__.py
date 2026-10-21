@@ -1,0 +1,1 @@
+"""AutoEdit TikTok desktop application."""
