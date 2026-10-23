@@ -1,6 +1,6 @@
 """Native studio presentation. Processing and persistence live in app/pipeline."""
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 from pathlib import Path
 
 BG = "#101219"
@@ -49,7 +49,11 @@ class ScrollPage(tk.Frame):
         self.body = tk.Frame(self.canvas, bg=BG)
         window = self.canvas.create_window((0, 0), window=self.body, anchor="nw")
         self.body.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-        self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfigure(window, width=e.width))
+        def resize(event):
+            width = min(1100, event.width)
+            self.canvas.itemconfigure(window, width=width)
+            self.canvas.coords(window, max(0, (event.width - width) // 2), 0)
+        self.canvas.bind("<Configure>", resize)
         scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y", padx=(10, 0))
@@ -166,25 +170,40 @@ class StudioUI:
         shell.pack(side="left", fill="both", expand=True)
         header = tk.Frame(shell, bg=CARD, padx=26, pady=13)
         header.pack(fill="x")
-        self.label(header, "Không gian làm việc", 9, MUTED).pack(side="left")
-        self.label(header, "  /  Video studio", 9, TEXT, True).pack(side="left")
+        self.label(header, "Video studio", 10, TEXT, True).pack(side="left")
         self.button(header, "Hướng dẫn", self.toggle_help, tracked=False).pack(side="right")
+        self.tiktok_button = self.button(header, "Đăng nhập TikTok", self.connect_tiktok)
+        self.tiktok_button.configure(wraplength=185)
+        self.tiktok_button.pack(side="right", padx=(8, 10))
         self.key_badge = self.label(header, "●  Chưa nhập API Key", 9, MUTED)
-        self.key_badge.pack(side="right", padx=18)
+        self.key_badge.pack(side="right", padx=8)
         self.key_badge.configure(cursor="hand2")
-        self.key_badge.bind("<Button-1>", lambda e: self.scroll_to(self.connection_card))
+        self.key_badge.bind("<Button-1>", lambda e: self.open_connection())
         tk.Frame(shell, bg=LINE, height=1).pack(fill="x")
 
         hero = tk.Frame(shell, bg=BG, padx=26, pady=18)
         hero.pack(fill="x")
-        self.label(hero, "VIDEO WORKSPACE  /  AI POWERED", 8, ACCENT, True).pack(anchor="w", pady=(0, 6))
-        self.label(hero, "Tạo nội dung. Kể câu chuyện.", 23, TEXT, True).pack(anchor="w")
-        self.label(hero, "Từ video căn phòng đến một bài đăng hoàn chỉnh — trong một không gian.", 10, MUTED).pack(anchor="w", pady=(5, 0))
+        self.step_eyebrow = self.label(hero, "TOOL 01  /  VIDEO STUDIO", 8, ACCENT, True)
+        self.step_eyebrow.pack(anchor="w", pady=(0, 6))
+        self.step_title = self.label(hero, "", 23, TEXT, True)
+        self.step_title.pack(anchor="w")
+        self.step_subtitle = self.label(hero, "", 10, MUTED)
+        self.step_subtitle.pack(anchor="w", pady=(5, 0))
+        steps_bar = tk.Frame(hero, bg=BG)
+        steps_bar.pack(fill="x", pady=(18, 0))
+        self.step_labels = []
+        for i, title in enumerate(("Video & yêu cầu", "Kịch bản & giọng", "Nhạc & logo", "Xuất video")):
+            steps_bar.columnconfigure(i, weight=1, uniform="steps")
+            label = self.label(steps_bar, f"{i + 1:02}   {title}", 10, MUTED, True, anchor="w", padx=12, pady=9)
+            label.grid(row=0, column=i, sticky="ew", padx=(0, 6))
+            self.step_labels.append(label)
 
         self.footer = tk.Frame(shell, bg=CARD, padx=24, pady=14)
         self.footer.pack(side="bottom", fill="x")
-        self.run_button = self.button(self.footer, "▶  Tạo video", lambda: self.start("all"), primary=True)
+        self.run_button = self.button(self.footer, "", self.next_step, primary=True)
         self.run_button.pack(side="right")
+        self.back_button = self.button(self.footer, "← Quay lại", self.previous_step)
+        self.back_button.pack(side="right", padx=(8, 8))
         self.stop_button = self.button(self.footer, "Dừng", self.cancel, danger=True, tracked=False)
         self.stop_button.pack(side="right", padx=9)
         self.stop_button.configure(state="disabled")
@@ -214,74 +233,56 @@ class StudioUI:
         self.page_host.pack(fill="both", expand=True, padx=24, pady=(0, 12))
         page = ScrollPage(self.page_host)
         self.pages["video"] = page
-        self.help_panel = tk.Frame(page.body, bg=BG)
-        self._help_page(self.help_panel)
-        self.editor_columns = tk.Frame(page.body, bg=BG)
-        self.editor_columns.pack(fill="x")
-        self.project_section = tk.Frame(self.editor_columns, bg=BG)
-        self.script_section = tk.Frame(self.editor_columns, bg=BG)
-        self.export_section = tk.Frame(self.editor_columns, bg=BG)
-        self._project_page(self.project_section)
-        self._script_page(self.script_section)
-        self._export_page(self.export_section)
-        self._layout_mode = None
-        self._wide_layout = False
-        self.editor_columns.bind("<Configure>", self._resize_editor)
+        self.steps = [tk.Frame(page.body, bg=BG) for _ in range(4)]
+        self._project_page(self.steps[0])
+        self._script_page(self.steps[1])
+        self._style_page(self.steps[2])
+        self._export_page(self.steps[3])
         self.vars["api_key"].trace_add("write", self._refresh_key_badge)
         self.vars["video"].trace_add("write", self._refresh_media)
         self._refresh_key_badge()
+        self.refresh_tiktok_badge()
         self._refresh_media()
+        self.show_step(0)
 
-    def _resize_editor(self, event):
-        mode = 3 if event.width >= 1160 else 2 if event.width >= 850 else 1
-        if mode == self._layout_mode:
-            return
-        self._layout_mode = mode
-        self._wide_layout = mode == 3
-        for section in (self.project_section, self.script_section, self.export_section):
-            section.grid_forget()
-        for column in range(3):
-            self.editor_columns.columnconfigure(column, weight=0, minsize=0, uniform="")
-        if mode == 3:
-            for column, (section, weight) in enumerate(((self.project_section, 10), (self.script_section, 14), (self.export_section, 10))):
-                self.editor_columns.columnconfigure(column, weight=weight, uniform="studio")
-                section.grid(row=0, column=column, sticky="nsew", padx=(0, 14 if column < 2 else 0))
-        elif mode == 2:
-            for column in range(2):
-                self.editor_columns.columnconfigure(column, weight=1, uniform="studio")
-            self.project_section.grid(row=0, column=0, sticky="nsew", padx=(0, 14))
-            self.script_section.grid(row=0, column=1, sticky="nsew")
-            self.export_section.grid(row=1, column=0, columnspan=2, sticky="nsew")
-        else:
-            self.editor_columns.columnconfigure(0, weight=1)
-            for row, section in enumerate((self.project_section, self.script_section, self.export_section)):
-                section.grid(row=row, column=0, sticky="nsew")
+    def two_columns(self, parent):
+        columns = [tk.Frame(parent, bg=BG) for _ in range(2)]
+        def resize(event):
+            wide = event.width >= 880
+            parent.columnconfigure(0, weight=3, uniform="pair")
+            parent.columnconfigure(1, weight=2 if wide else 0, uniform="pair" if wide else "")
+            columns[0].grid(row=0, column=0, sticky="nsew", padx=(0, 14 if wide else 0))
+            columns[1].grid(row=0 if wide else 1, column=1 if wide else 0, sticky="nsew")
+        parent.bind("<Configure>", resize)
+        return columns
 
     def _project_page(self, parent):
-        c = self.card(parent, "01   Nguồn video", "Bắt đầu từ một góc nhìn của bạn.")
-        stage = tk.Frame(c, bg=TINT, height=178)
-        stage.pack(fill="x", pady=(14, 9))
+        c = self.card(parent, "Video của bạn")
+        media = tk.Frame(c, bg=CARD)
+        media.pack(fill="x", pady=(14, 0))
+        stage = tk.Frame(media, bg=TINT, width=180, height=100)
+        stage.pack(side="left", padx=(0, 18))
         stage.pack_propagate(False)
-        self.preview = self.label(stage, "▷\n\nKhung hình của bạn", 13, "#b4a7f2", justify="center")
+        self.preview = self.label(stage, "▷\nVideo của bạn", 11, "#b4a7f2", justify="center")
         self.preview.pack(fill="both", expand=True)
-        self.media_label = self.paragraph(c, "Chưa chọn video", TEXT)
-        self.media_detail = self.paragraph(c, "MP4, MOV, MKV, AVI hoặc WEBM", size=8)
-        row = tk.Frame(c, bg=CARD)
+        details = tk.Frame(media, bg=CARD)
+        details.pack(side="left", fill="both", expand=True)
+        self.media_label = self.paragraph(details, "Chưa chọn video", TEXT)
+        self.media_detail = self.paragraph(details, "MP4, MOV, MKV, AVI hoặc WEBM", size=8)
+        row = tk.Frame(details, bg=CARD)
         row.pack(fill="x", pady=(12, 0))
         self.button(row, "＋ Chọn video", lambda: self.pick_file("video", "Video", "*.mp4 *.mov *.mkv *.avi *.webm")).pack(side="left")
         self.button(row, "Xem khung hình", lambda: self.start("inspect")).pack(side="right")
 
-        c = self.card(parent, "Thông tin bổ sung", "Giá, địa chỉ hoặc điểm nổi bật bạn muốn nhấn mạnh. Có thể để trống.")
+        self.label(c, "Nội dung gửi cho AI", 11, bold=True).pack(anchor="w", pady=(18, 0))
+        self.paragraph(c, "Nhập tư liệu, giá, địa chỉ hoặc điều cần nhấn mạnh. AI sẽ kết hợp với video để biên tập lời bình, không chép nguyên đoạn.")
         self.room_text = self.text_box(c, 4)
-
-        c = self.card(parent, "Kết nối Gemini", "Khóa được nhớ trên máy của bạn.")
-        self.connection_card = c
-        self.field(c, "api_key", "API Key", secret=True)
-        self.field(c, "model", "Model phân tích")
+        self.room_text.bind("<<Modified>>", self._source_edited)
 
     def _script_page(self, parent):
-        c = self.card(parent, "02   Nội dung & giọng đọc", "Để Gemini quan sát, rồi kể theo cách của bạn.")
-        self.button(c, "✦  Phân tích & viết kịch bản", lambda: self.start("draft"), primary=True).pack(fill="x", pady=(14, 4))
+        left, right = self.two_columns(parent)
+        c = self.card(left, "Chỉnh kịch bản", "Đọc lại và sửa lời bình trước khi tạo giọng.")
+        self.review_model_label = self.paragraph(c, "Chưa có kịch bản AI", ACCENT)
         self.label(c, "Lời bình", 10, TEXT, True).pack(anchor="w", pady=(12, 0))
         self.script_text = self.text_box(c, 8)
         self.word_count = self.label(c, "0 từ  ·  Nội dung sẽ được đọc thành lời", 8, MUTED)
@@ -291,7 +292,7 @@ class StudioUI:
         self.caption_text = self.text_box(c, 3)
         self.button(c, "Sao chép caption", self.copy_caption).pack(anchor="e", pady=(8, 0))
 
-        c = self.card(parent, "Giọng đọc", "Tạo giọng mới hoặc chọn file thu âm của bạn.")
+        c = self.card(right, "Giọng đọc", "Tạo giọng, nghe thử rồi xác nhận để tiếp tục.")
         for name, title, values in (
             ("engine", "Bộ tạo giọng", ["Gemini + Edge dự phòng", "Edge-TTS"]),
             ("voice", "Giọng Edge", ["vi-VN-HoaiMyNeural", "vi-VN-NamMinhNeural"]),
@@ -310,16 +311,18 @@ class StudioUI:
         self.button(row, "♫  Tạo giọng", lambda: self.start("voice")).pack(side="left")
         self.button(row, "Nghe thử", lambda: self.open_path(self.vars["voice_file"].get())).pack(side="right")
 
-        c = self.card(parent, "Gemini quan sát được", "Mô tả từ video sau khi phân tích.")
+        self.voice_hint = self.paragraph(c, "Chưa có file âm thanh để xác nhận.", ACCENT)
+        c = self.card(right, "Gemini quan sát được", "Mô tả từ video sau khi phân tích.")
         self.analysis_text = self.text_box(c, 4)
         self.inputs[-1] = (self.analysis_text, "disabled")
         self.analysis_text.configure(state="disabled")
 
-    def _export_page(self, parent):
-        c = self.card(parent, "03   Dấu ấn riêng", "Hoàn thiện hình ảnh và âm thanh.")
+    def _style_page(self, parent):
+        left, right = self.two_columns(parent)
+        c = self.card(right, "Logo thương hiệu")
         self.check(c, "use_logo", "Hiển thị logo")
         self.field(c, "logo", "Logo thương hiệu", lambda: self.pick_file("logo", "Hình ảnh", "*.png *.webp *.jpg *.jpeg"))
-        c = self.card(parent, "♫   Nhạc nền", "Tự tải nhạc miễn phí khi không chọn file.")
+        c = self.card(left, "♫   Nhạc nền", "Tự tải nhạc miễn phí khi không chọn file.")
         self.check(c, "use_bgm", "Chèn nhạc vào video")
         self.music_status = self.paragraph(c, "", ACCENT)
         self.button(c, "↓  Tự tải nhạc miễn phí", self.use_auto_music).pack(fill="x", pady=(10, 0))
@@ -330,26 +333,41 @@ class StudioUI:
         self.vars["use_bgm"].trace_add("write", self._refresh_music)
         self._refresh_music()
 
-        c = self.card(parent, "Thông tin liên hệ")
+        c = self.card(right, "Thông tin liên hệ")
         self.check(c, "use_contact", "Hiện ở cuối video")
         self.field(c, "contact1", "Tiêu đề")
         self.field(c, "contact2", "Số điện thoại / Zalo")
         self.field(c, "contact_duration", "Thời gian hiển thị (giây)")
 
-        c = self.card(parent, "Xuất thành phẩm", "MP4 · Giữ tỷ lệ nguồn · 30 fps")
+    def _export_page(self, parent):
+        c = self.card(parent, "Sẵn sàng xuất video", "MP4 · Giữ tỷ lệ nguồn · 30 fps")
+        self.export_summary = self.paragraph(c, "", TEXT, 10)
         self.field(c, "output_dir", "Lưu video vào", self.pick_output)
-        self.button(c, "Render với giọng đã chọn", lambda: self.start("render")).pack(fill="x", pady=(12, 0))
+        self.export_result = self.paragraph(c, "Video sẽ dùng đúng file giọng đọc đã xác nhận.", ACCENT)
+        self.tiktok_status = self.paragraph(c, "Chưa kết nối TikTok", MUTED)
+        auto_post = tk.Checkbutton(c, text="Tự động đăng lên TikTok sau khi xuất video", variable=self.auto_post,
+            command=self.auto_post_changed, bg=CARD, fg=TEXT, selectcolor=TINT,
+            activebackground=CARD, activeforeground=ACCENT, disabledforeground=MUTED,
+            bd=0, highlightthickness=0, anchor="w", cursor="hand2", font=("Segoe UI", 10))
+        auto_post.pack(fill="x", pady=(10, 0))
+        self.inputs.append((auto_post, "normal"))
+        self.paragraph(c, "Tool mở TikTok Studio, điền caption ở bước 2 và bấm Đăng. Quyền xem dùng theo lựa chọn trên TikTok Studio.", size=8)
         row = tk.Frame(c, bg=CARD)
         row.pack(fill="x", pady=(8, 0))
         self.button(row, "Thư mục", lambda: self.open_path(self.vars["output_dir"].get())).pack(side="left")
         self.button(row, "Video mới nhất", lambda: self.open_path(self.last_video)).pack(side="right")
+        self.post_button = self.button(row, "Đăng video vừa tạo", self.post_latest_video)
+        self.post_button.pack(side="right", padx=8)
 
-    def _help_page(self, parent):
-        c = self.card(parent, "Bắt đầu trong ba bước")
-        self.paragraph(c, "1. Chọn video và nhập API Key. Thông tin bổ sung có thể để trống.")
-        self.paragraph(c, "2. Bấm Phân tích & viết kịch bản, chỉnh lời bình/caption rồi tạo và nghe thử giọng đọc.")
-        self.paragraph(c, "3. Chọn logo, nhạc và thư mục xuất. Tạo video chạy trọn quy trình; Render với giọng đã chọn dùng file âm thanh hiện tại.")
-        self.paragraph(c, "Bạn có thể tự nhập lời bình và dùng Edge-TTS. Nút Dừng hủy tác vụ đang chạy; mở Nhật ký để xem chi tiết.")
+    def refresh_tiktok_badge(self, verified=False):
+        account = self.tiktok_account
+        self.tiktok_button.configure(text=f"TikTok · @{account['username']}" if account else "Đăng nhập TikTok")
+        if account:
+            name = account.get("display_name") or account["username"]
+            text = f"Đã đăng nhập thành công: {name} (@{account['username']})" if verified else f"Phiên đã lưu: @{account['username']} • Sẽ kiểm tra lại trước khi đăng"
+        else:
+            text = "Bấm Đăng nhập TikTok cạnh Gemini để kết nối tài khoản."
+        self.tiktok_status.configure(text=text, fg=GREEN if verified else MUTED)
 
     def show_page(self, key):
         self.current_page = key
@@ -358,12 +376,73 @@ class StudioUI:
         self.pages[key].pack(fill="both", expand=True)
 
     def toggle_help(self):
-        if self.help_panel.winfo_manager():
-            self.help_panel.pack_forget()
-        else:
-            self.help_panel.pack(fill="x", before=self.editor_columns)
-            self.update_idletasks()
-            self.pages["video"].canvas.yview_moveto(0)
+        messagebox.showinfo("Quy trình tạo video", "1. Chọn video, nhập yêu cầu và bấm Tạo kịch bản.\n\n2. Sửa lời bình, tạo hoặc chọn giọng đọc, nghe thử rồi bấm Xác nhận âm thanh.\n\n3. Chọn nhạc, logo và thông tin liên hệ.\n\n4. Chọn thư mục và xuất video.\n\nQuay lại để sửa từng bước; dữ liệu đã nhập được giữ nguyên.", parent=self)
+
+    def open_connection(self):
+        if self.process:
+            return
+        if getattr(self, "connection_dialog", None) and self.connection_dialog.winfo_exists():
+            self.connection_dialog.lift()
+            return
+        dialog = tk.Toplevel(self)
+        self.connection_dialog = dialog
+        dialog.title("Kết nối Gemini")
+        dialog.configure(bg=CARD, padx=24, pady=20)
+        dialog.geometry("600x360")
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        self.label(dialog, "Kết nối Gemini", 16, bold=True).pack(anchor="w")
+        self.paragraph(dialog, "API Key và model được nhớ trên máy của bạn.")
+        # Dialog widgets are short-lived, unlike the tracked wizard controls.
+        start = len(self.inputs)
+        entry = self.field(dialog, "api_key", "API Key")
+        self.field(dialog, "model", "Model phân tích")
+        self.check(dialog, "allow_model_fallback", "Dùng Gemini 3.5 Flash Lite dự phòng khi model chính tạm lỗi")
+        del self.inputs[start:]
+        def close():
+            self._save_settings()
+            dialog.destroy()
+        self.button(dialog, "Lưu & đóng", close, primary=True, tracked=False).pack(anchor="e", pady=(18, 0))
+        dialog.protocol("WM_DELETE_WINDOW", close)
+        dialog.grab_set()
+        entry.focus_set()
+
+    def show_step(self, step):
+        if self.process:
+            return
+        self.current_step = step
+        for frame in self.steps:
+            frame.pack_forget()
+        self.steps[step].pack(fill="x")
+        titles = ("Bắt đầu với video của bạn", "Kể theo cách của bạn", "Hoàn thiện dấu ấn riêng", "Xuất thành phẩm")
+        subtitles = ("Chọn video và gửi yêu cầu. AI sẽ chuẩn bị kịch bản ở bước tiếp theo.",
+                     "Chỉnh kịch bản, tạo giọng và xác nhận âm thanh trước khi đi tiếp.",
+                     "Chọn nhạc nền, logo và thông tin hiển thị trên video.",
+                     "Kiểm tra lựa chọn của bạn, rồi bắt đầu xuất video.")
+        self.step_eyebrow.configure(text=f"TOOL 01  /  BƯỚC {step + 1} CỦA 4")
+        self.step_title.configure(text=titles[step])
+        self.step_subtitle.configure(text=subtitles[step])
+        for i, label in enumerate(self.step_labels):
+            label.configure(bg=TINT if i == step else BG, fg=ACCENT if i == step else GREEN if i < step else MUTED)
+        if step == 3:
+            music = (Path(self.vars["bgm"].get()).name or "Tự tải nhạc CC0") if self.vars["use_bgm"].get() else "Tắt"
+            logo = Path(self.vars["logo"].get()).name if self.vars["use_logo"].get() else "Tắt"
+            self.export_summary.configure(text=f'Video: {Path(self.vars["video"].get()).name}\nGiọng đọc: {Path(self.vars["voice_file"].get()).name}\nNhạc nền: {music}\nLogo: {logo}')
+        self.refresh_navigation()
+        self.update_idletasks()
+        self.pages["video"].canvas.yview_moveto(0)
+
+    def refresh_navigation(self):
+        if not hasattr(self, "current_step"):
+            return
+        busy = self.process is not None
+        labels = ("Tiếp tục →" if self.source_ready is not None and self.source_ready == self.source_signature() else "✦  Tạo kịch bản", "Xác nhận âm thanh →", "Tiếp theo →", "▶  Xuất video")
+        self.run_button.configure(text=labels[self.current_step], state="disabled" if busy else "normal")
+        self.back_button.configure(state="disabled" if busy or self.current_step == 0 else "normal")
+        if hasattr(self, "voice_hint"):
+            path = self.vars["voice_file"].get()
+            stale = self.generated_voice_script is not None and self.generated_voice_script != self.script_text.get("1.0", "end").strip()
+            self.voice_hint.configure(text="Kịch bản đã đổi. Hãy tạo lại giọng đọc." if stale else f"Sẵn sàng xác nhận: {Path(path).name}" if path else "Chưa có file âm thanh để xác nhận.")
 
     def toggle_log(self):
         if self.terminal.winfo_manager():
@@ -390,10 +469,12 @@ class StudioUI:
 
     def _refresh_key_badge(self, *args):
         present = bool(self.vars["api_key"].get().strip())
-        self.key_badge.configure(text="●  Đã nhập API Key" if present else "●  Chưa nhập API Key",
+        self.key_badge.configure(text="⚙  Gemini · Đã nhập Key" if present else "⚙  Cài đặt Gemini · Chưa có Key",
                                  fg=GREEN if present else MUTED)
 
     def _refresh_media(self, *args):
+        self.source_ready = None
+        self.confirmed_voice = None
         path = self.vars["video"].get()
         self.media_label.configure(text=Path(path).name if path else "Chưa chọn video")
         detail = "MP4, MOV, MKV, AVI hoặc WEBM"
@@ -403,11 +484,18 @@ class StudioUI:
             except OSError:
                 detail = "Không tìm thấy file. Hãy chọn lại video."
         self.media_detail.configure(text=detail)
-        self.preview.configure(image="", text="▷\n\nXem khung hình để kiểm tra" if path else "▷\n\nKhung hình của bạn")
+        self.preview.configure(image="", text="▷\nXem khung hình" if path else "▷\nVideo của bạn")
         self.preview_image = None
+        self.refresh_navigation()
+
+    def _source_edited(self, event=None):
+        if self.room_text.edit_modified():
+            self.refresh_navigation()
+            self.room_text.edit_modified(False)
 
     def _update_word_count(self, event=None):
         if self.script_text.edit_modified():
             words = len(self.script_text.get("1.0", "end").split())
             self.word_count.configure(text=f"{words} từ  ·  Nội dung sẽ được đọc thành lời")
             self.script_text.edit_modified(False)
+            self.refresh_navigation()

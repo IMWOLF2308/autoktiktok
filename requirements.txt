@@ -3,3 +3,4 @@ google-genai==2.31.0
 edge-tts==7.3.1
 httpx==0.28.1
 pydantic==2.14.1
+playwright==1.64.0

@@ -71,7 +71,7 @@ class DesktopPipelineTests(unittest.TestCase):
                     Path("temp").mkdir(exist_ok=True)
                     Path("temp/storyboard.jpg").write_bytes(b"preview")
 
-                def draft(*args):
+                def draft(*args, **kwargs):
                     storyboard()
                     return SimpleNamespace(room_info="Chi tiết quan sát", voiceover_script="Lời bình", tiktok_caption="#test")
 

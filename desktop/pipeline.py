@@ -13,6 +13,8 @@ import sys
 import traceback
 import uuid
 from core.process_utils import run_command
+from core.gemini_config import DEFAULT_REVIEW_MODEL, FALLBACK_REVIEW_MODEL
+from core.content_rules import prepare_voiceover
 
 
 def default_asset(relative: str) -> str:
@@ -41,7 +43,8 @@ class JobConfig:
     output_dir: str = ""
     room_info: str = ""
     api_key: str = ""
-    model: str = "gemini-3.8-flash-lite"
+    model: str = DEFAULT_REVIEW_MODEL
+    allow_model_fallback: bool = True
     script: str = ""
     caption: str = ""
     voice_file: str = ""
@@ -60,7 +63,7 @@ class JobConfig:
 
 
 def validate_job(config: JobConfig, action: str) -> None:
-    if action not in {"inspect", "draft", "voice", "render", "all"}:
+    if action not in {"inspect", "draft", "voice", "check_voice", "render", "all"}:
         raise ValueError("Tác vụ không hợp lệ.")
     if not config.output_dir.strip():
         raise ValueError("Hãy chọn thư mục xuất video.")
@@ -75,22 +78,26 @@ def validate_job(config: JobConfig, action: str) -> None:
         raise ValueError("Hãy nhập model Gemini dùng để phân tích video.")
     if action == "voice" and not config.script.strip():
         raise ValueError("Hãy nhập hoặc tạo lời bình trước khi tạo giọng đọc.")
-    if action == "render" and not Path(config.voice_file).is_file():
+    if action in {"render", "check_voice"} and not Path(config.voice_file).is_file():
         raise ValueError("Hãy tạo hoặc chọn tệp giọng đọc trước khi render.")
     if config.engine not in {"Gemini + Edge dự phòng", "Edge-TTS"}:
         raise ValueError("Bộ tạo giọng đọc không hợp lệ.")
     if not re.fullmatch(r"[+-]\d{1,3}%", config.rate) or not -50 <= int(config.rate[:-1]) <= 100:
         raise ValueError("Tốc độ Edge-TTS phải từ -50% đến +100%.")
     if action in {"render", "all"}:
-        for enabled, path, label in [(config.use_logo, config.logo, "logo"), (config.use_bgm and bool(config.bgm.strip()), config.bgm, "nhạc nền")]:
-            if enabled and not Path(path).is_file():
-                raise ValueError(f"Hãy chọn tệp {label}, hoặc tắt tùy chọn này.")
-        if not math.isfinite(config.bgm_volume) or not 0 <= config.bgm_volume <= 1:
-            raise ValueError("Âm lượng nhạc nền phải từ 0 đến 100%.")
-        if not math.isfinite(config.contact_duration) or not 0.5 <= config.contact_duration <= 60:
-            raise ValueError("Thời gian hiện liên hệ phải từ 0,5 đến 60 giây.")
-        if config.use_contact and not config.contact2.strip():
-            raise ValueError("Hãy nhập dòng thông tin liên hệ.")
+        validate_style(config)
+
+
+def validate_style(config: JobConfig) -> None:
+    for enabled, path, label in [(config.use_logo, config.logo, "logo"), (config.use_bgm and bool(config.bgm.strip()), config.bgm, "nhạc nền")]:
+        if enabled and not Path(path).is_file():
+            raise ValueError(f"Hãy chọn tệp {label}, hoặc tắt tùy chọn này.")
+    if not math.isfinite(config.bgm_volume) or not 0 <= config.bgm_volume <= 1:
+        raise ValueError("Âm lượng nhạc nền phải từ 0 đến 100%.")
+    if not math.isfinite(config.contact_duration) or not 0.5 <= config.contact_duration <= 60:
+        raise ValueError("Thời gian hiện liên hệ phải từ 0,5 đến 60 giây.")
+    if config.use_contact and not config.contact2.strip():
+        raise ValueError("Hãy nhập dòng thông tin liên hệ.")
 
 
 def run_job(config: JobConfig, action: str, emit) -> dict:
@@ -105,14 +112,16 @@ def run_job(config: JobConfig, action: str, emit) -> dict:
     media_inputs = []
     if action != "voice":
         media_inputs.append((config.video, "video", "Video nguồn"))
-    if action == "render":
+    if action in {"render", "check_voice"}:
         media_inputs.append((config.voice_file, "audio", "Tệp giọng đọc"))
     if action in {"render", "all"} and config.use_bgm and config.bgm.strip():
         media_inputs.append((config.bgm, "audio", "Nhạc nền"))
     for path, stream_type, label in media_inputs:
-        probe = run_command(["ffprobe", "-v", "error", "-show_streams", "-of", "json", path], capture_output=True)
+        probe = run_command(["ffprobe", "-v", "error", "-show_streams", "-of", "json", path], capture_output=True, timeout=20)
         if probe.returncode or not any(s.get("codec_type") == stream_type for s in json.loads(probe.stdout).get("streams", [])):
             raise ValueError(f"{label} không chứa luồng {stream_type} hợp lệ.")
+    if action == "check_voice":
+        return {"voice_file": config.voice_file}
     if action in {"render", "all"} and config.use_logo:
         from PIL import Image
         with Image.open(config.logo) as logo:
@@ -149,16 +158,22 @@ def run_job(config: JobConfig, action: str, emit) -> dict:
             return result
         if action == "draft" or (action == "all" and not config.script.strip()):
             emit("stage", "01 / AI viết kịch bản")
-            review = analyze_video_and_generate_script(config.api_key, config.video, config.room_info, config.model)
-            config.script, config.caption = review.voiceover_script, review.tiktok_caption
+            review = analyze_video_and_generate_script(
+                config.api_key, config.video, config.room_info, config.model,
+                on_progress=lambda message: emit("stage", message),
+                fallback_model=FALLBACK_REVIEW_MODEL if config.allow_model_fallback else "",
+            )
+            config.script, config.caption = prepare_voiceover(review.voiceover_script), review.tiktok_caption
             if not config.script.strip():
                 raise ValueError("AI trả về lời bình trống. Hãy thử lại hoặc tự nhập lời bình.")
             room_file = prefix.with_suffix(".room.txt")
             room_file.write_text(review.room_info, encoding="utf-8")
             result["room_info_file"] = str(room_file)
-            emit("script", {"script": config.script, "caption": config.caption, "room_info": review.room_info})
+            emit("script", {"script": config.script, "caption": config.caption, "room_info": review.room_info,
+                            "model": getattr(review, "model_used", "") or config.model})
             publish_storyboard()
         if action in {"voice", "all"}:
+            config.script = prepare_voiceover(config.script)
             emit("stage", "02 / Tạo giọng đọc")
             config.voice_file = generate_voiceover_mp3(
                 config.script, str(work / "voiceover.mp3"), voice=config.voice, rate=config.rate,

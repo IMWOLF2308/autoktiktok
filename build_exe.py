@@ -18,7 +18,7 @@ def main():
     command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--windowed",
                "--name", "AutoEditTikTok", "--onefile" if args.onefile else "--onedir",
                "--collect-all", "google.genai", "--collect-data", "certifi",
-               "--copy-metadata", "edge-tts"]
+               "--copy-metadata", "edge-tts", "--collect-all", "playwright"]
     for executable in ("ffmpeg", "ffprobe"):
         path = shutil.which(executable)
         if not path:
